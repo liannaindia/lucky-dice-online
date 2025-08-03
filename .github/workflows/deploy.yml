@@ -25,5 +25,4 @@ jobs:
       env:
         FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
       run: |
-        cd lucky-dice-deploy
-          firebase deploy --only hosting,functions
+        firebase deploy --only hosting,functions
