@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Panel</title>
+  <style>
+    body { background: #f4f6f9; font-family: 'Segoe UI', sans-serif; margin: 0; }
+    h2 { padding: 20px; margin: 0; background: #1f2d3d; color: white; }
+    .container { padding: 20px; }
+    .section { margin-bottom: 32px; }
+    .section h3 { margin-bottom: 12px; }
+    .form-control { width: 100%; max-width: 400px; padding: 10px; margin-bottom: 10px; font-size: 16px; }
+    .btn { background: #007bff; color: white; border: none; padding: 10px 18px; cursor: pointer; font-size: 16px; border-radius: 4px; }
+    .btn:hover { background: #0056b3; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border: 1px solid #ddd; padding: 10px; text-align: center; }
+    th { background-color: #f2f2f2; }
+    .modal-bg { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5); display: none; justify-content: center; align-items: center; z-index: 9999; }
+    .modal { background: white; padding: 20px; border-radius: 8px; min-width: 300px; position: relative; }
+    .close-btn { position: absolute; top: 10px; right: 10px; cursor: pointer; color: red; }
+  </style>
+</head>
+<body>
+  <h2>Admin Panel</h2>
+  <div class="container">
+
+    <!-- Admin Login Modal -->
+    <div class="modal-bg" id="loginModal">
+      <div class="modal">
+        <span class="close-btn" onclick="closeModal('loginModal')">✖</span>
+        <h3>Login</h3>
+        <input type="email" id="loginEmail" class="form-control" placeholder="Email" />
+        <input type="password" id="loginPassword" class="form-control" placeholder="Password" />
+        <button class="btn" id="loginBtn">Login</button>
+      </div>
+    </div>
+
+    <!-- Payment Config -->
+    <div class="section" id="paymentConfigSection" style="display: none;">
+      <h3>Payment Config</h3>
+      <input type="text" id="bankName" class="form-control" placeholder="Bank Name" />
+      <input type="text" id="accountNumber" class="form-control" placeholder="Account Number" />
+      <input type="text" id="ifscCode" class="form-control" placeholder="IFSC Code" />
+      <input type="text" id="upiId" class="form-control" placeholder="UPI ID" />
+      <input type="text" id="cryptoAddress" class="form-control" placeholder="Crypto Address" />
+      <button class="btn" id="savePaymentBtn">Save Payment Info</button>
+    </div>
+
+    <!-- Deposit Requests -->
+    <div class="section" id="depositSection" style="display: none;">
+      <h3>Deposit Requests</h3>
+      <table id="depositTable">
+        <thead>
+          <tr><th>User</th><th>UTR</th><th>Amount</th><th>Status</th><th>Action</th><th>Reject</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <!-- Withdraw Requests -->
+    <div class="section" id="withdrawSection" style="display: none;">
+      <h3>Withdraw Requests</h3>
+      <table id="withdrawTable">
+        <thead>
+          <tr><th>User</th><th>Amount</th><th>Info</th><th>Status</th><th>Action</th><th>Reject</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Firebase Scripts -->
+  <script type="module">
+    import { auth as adminAuth, db as dbAdmin } from './firebase-config-admin.js';
+    import { auth, db as userDB } from './firebase-config.js';
+    import { signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import { doc, getDoc, setDoc, collection, getDocs, updateDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    document.addEventListener('DOMContentLoaded', () => {
+      showLoginModal();
+      document.getElementById("loginBtn").addEventListener("click", window.submitLogin);
+      document.getElementById("savePaymentBtn").addEventListener("click", window.savePaymentInfo);
+    });
+
+    function showLoginModal() {
+      document.getElementById('loginModal').style.display = 'flex';
+    }
+
+    function closeModal(modalId) {
+      document.getElementById(modalId).style.display = 'none';
+    }
+
+    window.submitLogin = async function () {
+      const email = document.getElementById("loginEmail").value;
+      const password = document.getElementById("loginPassword").value;
+      try {
+        await signInWithEmailAndPassword(adminAuth, email, password);
+        closeModal('loginModal');
+        showAdminSections();
+      } catch (error) {
+        alert("Login failed: " + error.message);
+      }
+    }
+
+    function showAdminSections() {
+      document.getElementById("paymentConfigSection").style.display = "block";
+      document.getElementById("depositSection").style.display = "block";
+      document.getElementById("withdrawSection").style.display = "block";
+      loadDepositRequests();
+      loadWithdrawRequests();
+    }
+
+    onAuthStateChanged(adminAuth, user => {
+      if (user?.email === 'admin@gmail.com') {
+        showAdminSections();
+      } else {
+        showLoginModal();
+      }
+    });
+
+    window.savePaymentInfo = async function () {
+      const name = document.getElementById("bankName").value;
+      const ac = document.getElementById("accountNumber").value;
+      const ifsc = document.getElementById("ifscCode").value;
+      const upi = document.getElementById("upiId").value;
+      const crypto = document.getElementById("cryptoAddress").value;
+      try {
+        await setDoc(doc(dbAdmin, "payment_info", "general"), { name, ac, ifsc, upi, crypto });
+        alert("Saved!");
+      } catch (err) {
+        alert("Error saving payment info: " + err.message);
+      }
+    }
+
+    async function loadDepositRequests() {
+      const querySnapshot = await getDocs(collection(userDB, "deposit_requests"));
+      const tbody = document.querySelector("#depositTable tbody");
+      tbody.innerHTML = "";
+      querySnapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        const status = data.status || 'pending';
+        const row = `<tr id="row-${docSnap.id}">
+          <td>${data.email || 'N/A'}</td>
+          <td>${data.utr || ''}</td>
+          <td>${data.amount || ''}</td>
+          <td>${status}</td>
+          <td>${status !== 'pending' ? '' : `<button onclick="approveDeposit('${docSnap.id}', ${data.amount}, '${data.uid}')">Approve</button>`}</td>
+          <td>${status !== 'pending' ? '' : `<button onclick="rejectDeposit('${docSnap.id}')">Reject</button>`}</td>
+        </tr>`;
+        tbody.innerHTML += row;
+      });
+    }
+
+    async function loadWithdrawRequests() {
+      const querySnapshot = await getDocs(collection(userDB, "withdraw_requests"));
+      const tbody = document.querySelector("#withdrawTable tbody");
+      tbody.innerHTML = "";
+      querySnapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        const status = data.status || 'pending';
+        const row = `<tr id="row-${docSnap.id}">
+          <td>${data.email || 'N/A'}</td>
+          <td>${data.amount || ''}</td>
+          <td>
+            Name: ${data.name || '-'}<br>
+            AC: ${data.ac || '-'}<br>
+            IFSC: ${data.ifsc || '-'}<br>
+            UPI: ${data.upi || '-'}<br>
+            Crypto: ${data.crypto || '-'}
+          </td>
+          <td>${status}</td>
+          <td>${status !== 'pending' ? '' : `<button onclick="approveWithdraw('${docSnap.id}', ${data.amount}, '${data.uid}')">Approve</button>`}</td>
+          <td>${status !== 'pending' ? '' : `<button onclick="rejectWithdraw('${docSnap.id}')">Reject</button>`}</td>
+        </tr>`;
+        tbody.innerHTML += row;
+      });
+    }
+
+    window.approveDeposit = async (id, amount, uid) => {
+      try {
+        const userRef = doc(userDB, "users", uid);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          const currentBalance = userSnap.data().balance || 0;
+          const newBalance = currentBalance + amount;
+          await updateDoc(userRef, { balance: newBalance });
+          await updateDoc(doc(userDB, "deposit_requests", id), { status: "approved" });
+          updateRowStatus(id, 'approved');
+          alert(`Deposit approved. New balance: ₹${newBalance}`);
+        } else {
+          alert("User not found.");
+        }
+      } catch (err) {
+        alert("Failed to approve deposit: " + err.message);
+      }
+    }
+
+    window.rejectDeposit = async (id) => {
+      try {
+        await updateDoc(doc(userDB, "deposit_requests", id), { status: "rejected" });
+        updateRowStatus(id, 'rejected');
+        alert("Deposit rejected.");
+      } catch (err) {
+        alert("Failed to reject deposit: " + err.message);
+      }
+    }
+
+    window.approveWithdraw = async (id, amount, uid) => {
+      try {
+        const userRef = doc(userDB, "users", uid);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          const currentBalance = userSnap.data().balance || 0;
+          if (currentBalance >= amount) {
+            const newBalance = currentBalance - amount;
+            await updateDoc(userRef, { balance: newBalance });
+            await updateDoc(doc(userDB, "withdraw_requests", id), { status: "approved" });
+            updateRowStatus(id, 'approved');
+            alert(`Withdraw approved. New balance: ₹${newBalance}`);
+          } else {
+            alert("Insufficient balance for withdrawal.");
+          }
+        } else {
+          alert("User not found.");
+        }
+      } catch (err) {
+        alert("Failed to approve withdraw: " + err.message);
+      }
+    }
+
+    window.rejectWithdraw = async (id) => {
+      try {
+        await updateDoc(doc(userDB, "withdraw_requests", id), { status: "rejected" });
+        updateRowStatus(id, 'rejected');
+        alert("Withdraw rejected.");
+      } catch (err) {
+        alert("Failed to reject withdraw: " + err.message);
+      }
+    }
+
+    function updateRowStatus(id, status) {
+      const row = document.querySelector(`#row-${id}`);
+      if (row) {
+        row.children[3].textContent = status;
+        row.children[4].innerHTML = '';
+        row.children[5].innerHTML = '';
+      }
+    }
+  </script>
+</body>
+</html>

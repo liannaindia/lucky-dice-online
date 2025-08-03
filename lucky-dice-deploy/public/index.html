@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>India Game Lobby</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #fff9f2; }
+    header {
+      background-color: #b22222;
+      color: white;
+      padding: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #user-info button { margin-left: 10px; background: #f39c12; border: none; color: white; padding: 6px 12px; border-radius: 5px; cursor: pointer; }
+    .modal-bg {
+      position: fixed; top:0; left:0; right:0; bottom:0; display: none;
+      background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 1000;
+    }
+    .modal { background: white; padding: 20px; border-radius: 10px; max-width: 400px; width: 90%; position: relative; }
+    input, textarea { width: 100%; padding: 10px; margin: 8px 0; border-radius: 6px; border: 1px solid #ccc; }
+    button { font-weight: bold; }
+    .game-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; padding: 20px; }
+    .game-card { background: white; padding: 16px; border-radius: 8px; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+    .close-btn {
+      position: absolute;
+      top: 8px;
+      right: 12px;
+      font-size: 18px;
+      background: none;
+      border: none;
+      color: #888;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h2>🎮 India Game Lobby</h2>
+    <div id="user-info"></div>
+  </header>
+  <main>
+    <div class="game-grid">
+      <div class="game-card"><h3>Lucky Dice</h3><button class="game-button" onclick="window.location.href='lucky-dice.html'">Play Game</button></div>
+      <div class="game-card"><h3>Wheel of Fortune</h3></div>
+    </div>
+  </main>
+
+  <!-- Modals -->
+  <div class="modal-bg" id="modal-auth">
+    <div class="modal">
+      <button class="close-btn" onclick="hideModals()">✖</button>
+      <h3 id="modal-title">Login</h3>
+      <input type="email" placeholder="Email" id="email">
+      <input type="password" placeholder="Password" id="password">
+      <button onclick="submitAuth()">Submit</button>
+    </div>
+  </div>
+
+  <div class="modal-bg" id="modal-recharge">
+    <div class="modal">
+      <button class="close-btn" onclick="hideModals()">✖</button>
+      <h3>Recharge Request</h3>
+      <div id="recharge-info"></div>
+      <input id="utr" placeholder="Enter UTR Number" />
+      <input id="amount" placeholder="Enter Amount (₹)" type="number" />
+      <button onclick="submitRecharge()">Submit Recharge</button>
+    </div>
+  </div>
+
+  <div class="modal-bg" id="modal-withdraw">
+    <div class="modal">
+      <button class="close-btn" onclick="hideModals()">✖</button>
+      <h3>Withdraw Request</h3>
+      <div id="withdraw-info-form"></div>
+      <input id="withdraw-amount" placeholder="Amount ₹" type="number">
+      <button onclick="submitWithdraw()">Submit Withdraw</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import { auth, db } from './firebase-config.js';
+    import { db as adminDB } from './firebase-config-admin.js'; // 引入管理员 Firebase 配置
+    import {
+      createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import {
+      doc, getDoc, setDoc, collection, addDoc
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    const userInfo = document.getElementById("user-info");
+    let registerMode = false;
+
+    window.setRegisterMode = function(mode) {
+      registerMode = mode;
+      document.getElementById('modal-title').innerText = mode ? 'Register' : 'Login';
+      showModal('modal-auth');
+    }
+
+    window.showModal = function(id) {
+      document.querySelectorAll(".modal-bg").forEach(m => m.style.display = 'none');
+      document.getElementById(id).style.display = 'flex';
+    }
+
+    window.hideModals = function() {
+      document.querySelectorAll(".modal-bg").forEach(m => m.style.display = 'none');
+    }
+
+    window.submitAuth = async function () {
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      try {
+        if (registerMode) {
+          const user = await createUserWithEmailAndPassword(auth, email, password);
+          await setDoc(doc(db, "users", user.user.uid), { email, balance: 0 });
+        } else {
+          await signInWithEmailAndPassword(auth, email, password);
+        }
+        hideModals();
+      } catch (e) { alert(e.message); }
+    }
+
+    window.logout = () => signOut(auth);
+
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        userInfo.innerHTML = `
+          <button onclick="setRegisterMode(false)">Login</button>
+          <button onclick="setRegisterMode(true)">Register</button>
+        `;
+        return;
+      }
+      const snap = await getDoc(doc(db, "users", user.uid));
+      const data = snap.data();
+      userInfo.innerHTML = `
+        👤 ${data.email} | 💰 ₹${data.balance}
+        <button onclick="showRecharge()">Recharge</button>
+        <button onclick="showWithdraw()">Withdraw</button>
+        <button onclick="logout()">Logout</button>
+      `;
+    });
+
+    window.showRecharge = async () => {
+      const snap = await getDoc(doc(adminDB, "payment_info", "general"));
+      const info = snap.exists() ? snap.data() : {};
+      document.getElementById("recharge-info").innerHTML = `
+        <b>Name:</b> ${info.name || 'N/A'}<br>
+        <b>Account:</b> ${info.ac || 'N/A'}<br>
+        <b>IFSC:</b> ${info.ifsc || 'N/A'}<br>
+        <b>UPI:</b> ${info.upi || 'N/A'}<br>
+        <b>Crypto:</b> ${info.crypto || 'N/A'}<br>
+      `;
+      showModal('modal-recharge');
+    };
+
+    window.submitRecharge = async () => {
+      try {
+        const user = auth.currentUser;
+        const utr = document.getElementById("utr").value;
+        const amt = parseFloat(document.getElementById("amount").value);
+        
+        await addDoc(collection(db, 'deposit_requests'), {
+          uid: user.uid,
+          email: user.email,
+          utr,
+          amount: amt,
+          status: "pending",
+          timestamp: new Date()
+        });
+        
+        alert("Recharge request sent");
+        hideModals();
+      } catch (e) {
+        alert("Error submitting recharge request: " + e.message);
+      }
+    };
+
+    window.showWithdraw = async () => {
+      const user = auth.currentUser;
+      const ref = doc(db, "withdraw_info", user.uid);
+      const snap = await getDoc(ref);
+      const el = document.getElementById("withdraw-info-form");
+      if (!snap.exists()) {
+        el.innerHTML = `
+          <input placeholder="Name" id="w-name">
+          <input placeholder="Account No" id="w-ac">
+          <input placeholder="IFSC" id="w-ifsc">
+          <input placeholder="UPI ID" id="w-upi">
+          <input placeholder="Crypto Address" id="w-crypto">
+          <button onclick="saveWithdrawInfo()">Save Info</button>
+        `;
+      } else {
+        const data = snap.data();
+        el.innerHTML = `<b>${data.name}</b><br>AC: ${data.ac}<br>IFSC: ${data.ifsc}<br>UPI: ${data.upi}<br>Crypto: ${data.crypto}`;
+      }
+      showModal("modal-withdraw");
+    };
+
+    window.saveWithdrawInfo = async () => {
+      try {
+        const user = auth.currentUser;
+        await setDoc(doc(db, "withdraw_info", user.uid), {
+          name: document.getElementById("w-name").value,
+          ac: document.getElementById("w-ac").value,
+          ifsc: document.getElementById("w-ifsc").value,
+          upi: document.getElementById("w-upi").value,
+          crypto: document.getElementById("w-crypto").value
+        });
+        alert("Info saved. You may now withdraw.");
+        showWithdraw();
+      } catch (e) { alert(e.message); }
+    };
+
+    window.submitWithdraw = async () => {
+      try {
+        const user = auth.currentUser;
+        const amt = parseFloat(document.getElementById("withdraw-amount").value);
+        await addDoc(collection(db, "withdraw_requests"), {
+          uid: user.uid,
+          email: user.email,
+          amount: amt,
+          status: "pending",
+          timestamp: new Date()
+        });
+        alert("Withdraw request sent"); hideModals();
+      } catch (e) { alert(e.message); }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lucky Dice Game</title>
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; background: #fffaf0; margin: 0; padding: 0; }
+    header { background: #b22222; color: white; padding: 12px 20px; font-size: 20px; }
+    main { padding: 20px; max-width: 600px; margin: auto; }
+    .info { margin-bottom: 10px; font-weight: bold; }
+    .dice-area { display: flex; justify-content: center; margin: 20px 0; }
+    .dice { width: 60px; height: 60px; background: #eee; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 24px; margin: 0 5px; }
+    .buttons { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-bottom: 20px; }
+    .buttons button { padding: 8px 14px; border: none; background: #f39c12; color: white; border-radius: 6px; cursor: pointer; font-weight: bold; }
+    input[type='number'] { width: 100%; padding: 10px; margin-bottom: 12px; font-size: 16px; border-radius: 6px; border: 1px solid #ccc; }
+    .result { text-align: center; font-size: 20px; font-weight: bold; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <header>
+    🎲 Lucky Dice Game
+  </header>
+  <main>
+    <div class="info">Period: <span id="period">Loading...</span></div>
+    <div class="info">Time Left: <span id="countdown">--</span> seconds</div>
+    <div class="info">Balance: ₹<span id="balance">--</span></div>
+
+    <div class="dice-area">
+      <div class="dice" id="d1">🎲</div>
+      <div class="dice" id="d2">🎲</div>
+      <div class="dice" id="d3">🎲</div>
+    </div>
+
+    <input type="number" id="betAmount" placeholder="Enter bet amount ₹">
+    <div class="buttons">
+      <button onclick="placeBet('big')">Big (11-18)</button>
+      <button onclick="placeBet('small')">Small (3-10)</button>
+      <button onclick="placeBet('odd')">Odd</button>
+      <button onclick="placeBet('even')">Even</button>
+      <button onclick="placeBet('sum_3')">Total 3</button>
+      <button onclick="placeBet('sum_4')">Total 4</button>
+      <button onclick="placeBet('sum_5')">Total 5</button>
+      <button onclick="placeBet('sum_6')">Total 6</button>
+      <button onclick="placeBet('sum_7')">Total 7</button>
+      <button onclick="placeBet('sum_8')">Total 8</button>
+      <button onclick="placeBet('sum_9')">Total 9</button>
+      <button onclick="placeBet('sum_10')">Total 10</button>
+      <button onclick="placeBet('sum_11')">Total 11</button>
+      <button onclick="placeBet('sum_12')">Total 12</button>
+      <button onclick="placeBet('sum_13')">Total 13</button>
+      <button onclick="placeBet('sum_14')">Total 14</button>
+      <button onclick="placeBet('sum_15')">Total 15</button>
+      <button onclick="placeBet('sum_16')">Total 16</button>
+      <button onclick="placeBet('sum_17')">Total 17</button>
+      <button onclick="placeBet('sum_18')">Total 18</button>
+    </div>
+
+    <div class="result" id="resultDisplay">Waiting for result...</div>
+  </main>
+
+  <script type="module">
+    import { auth, db } from './firebase-config.js';
+    import {
+      onAuthStateChanged,
+      signInWithEmailAndPassword
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import {
+      doc, getDoc, setDoc, updateDoc, addDoc, collection, onSnapshot, runTransaction, query, where, getDocs
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    let currentUser = null;
+    let currentPeriod = '';
+    let resultAlreadyShown = false;
+
+    const balanceEl = document.getElementById('balance');
+    const countdownEl = document.getElementById('countdown');
+    const periodEl = document.getElementById('period');
+    const resultEl = document.getElementById('resultDisplay');
+    const diceEls = [document.getElementById('d1'), document.getElementById('d2'), document.getElementById('d3')];
+
+    function getCurrentPeriod() {
+      const now = new Date();
+      const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const yyyy = ist.getFullYear();
+      const mm = String(ist.getMonth() + 1).padStart(2, '0');
+      const dd = String(ist.getDate()).padStart(2, '0');
+      const hh = String(ist.getHours()).padStart(2, '0');
+      const mi = String(ist.getMinutes()).padStart(2, '0');
+      return `${yyyy}${mm}${dd}${hh}${mi}`;
+    }
+
+    function startCountdown() {
+      const now = new Date();
+      const nextMinute = new Date(now.getTime() + 60000);
+      nextMinute.setSeconds(0, 0);
+      const interval = setInterval(() => {
+        const diff = Math.floor((nextMinute - new Date()) / 1000);
+        countdownEl.textContent = diff;
+        if (diff <= 0) {
+          clearInterval(interval);
+          location.reload();
+        }
+      }, 1000);
+    }
+
+    function listenResult() {
+      const period = getCurrentPeriod();
+      currentPeriod = period;
+      periodEl.textContent = period;
+      const ref = doc(db, 'dice_results', period);
+
+      onSnapshot(ref, async (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (!resultAlreadyShown) {
+            resultAlreadyShown = true;
+            showDice(data.dice);
+            resultEl.textContent = `Result: ${data.dice.join(' + ')} = ${data.total}`;
+            checkAndSettleBets(data.total);
+          }
+        } else {
+          try {
+            await runTransaction(db, async (transaction) => {
+              const existing = await transaction.get(ref);
+              if (!existing.exists()) {
+                const d1 = Math.floor(Math.random() * 6) + 1;
+                const d2 = Math.floor(Math.random() * 6) + 1;
+                const d3 = Math.floor(Math.random() * 6) + 1;
+                const total = d1 + d2 + d3;
+                transaction.set(ref, { dice: [d1, d2, d3], total });
+              }
+            });
+          } catch (e) {
+            // silently fail
+          }
+        }
+      });
+    }
+
+    function showDice(dice) {
+      for (let i = 0; i < 3; i++) {
+        diceEls[i].textContent = dice[i];
+      }
+    }
+
+    async function loadBalance() {
+      const snap = await getDoc(doc(db, 'users', currentUser.uid));
+      balanceEl.textContent = snap.data().balance;
+    }
+
+    window.placeBet = async (type) => {
+      const amount = parseFloat(document.getElementById('betAmount').value);
+      if (!amount || amount <= 0) return alert('Enter valid amount');
+      const userRef = doc(db, 'users', currentUser.uid);
+      const snap = await getDoc(userRef);
+      const bal = snap.data().balance;
+      if (bal < amount) return alert('Insufficient balance');
+
+      await addDoc(collection(db, 'bets'), {
+        uid: currentUser.uid,
+        email: currentUser.email,
+        period: currentPeriod,
+        type,
+        amount,
+        status: 'pending',
+        timestamp: new Date()
+      });
+
+      await updateDoc(userRef, { balance: bal - amount });
+      alert('Bet placed!');
+      loadBalance();
+    }
+
+    async function checkAndSettleBets(resultTotal) {
+      const betQuery = query(collection(db, 'bets'), where('period', '==', currentPeriod), where('status', '==', 'pending'));
+      const querySnapshot = await getDocs(betQuery);
+
+      for (const docSnap of querySnapshot.docs) {
+        const bet = docSnap.data();
+        let isWin = false;
+        if (bet.type === 'big') isWin = resultTotal >= 11;
+        else if (bet.type === 'small') isWin = resultTotal <= 10;
+        else if (bet.type === 'odd') isWin = resultTotal % 2 === 1;
+        else if (bet.type === 'even') isWin = resultTotal % 2 === 0;
+        else if (bet.type.startsWith('sum_')) isWin = parseInt(bet.type.split('_')[1]) === resultTotal;
+
+        if (isWin) {
+          const payout = bet.type.startsWith('sum_') ? bet.amount * 5.8 : bet.amount * 1.95;
+          const userRef = doc(db, 'users', bet.uid);
+          await updateDoc(userRef, {
+            balance: (await getDoc(userRef)).data().balance + payout
+          });
+        }
+
+        await updateDoc(doc(db, 'bets', docSnap.id), { status: 'settled' });
+      }
+
+      loadBalance();
+    }
+
+    onAuthStateChanged(auth, async user => {
+      if (!user) return location.href = './index.html';
+      currentUser = user;
+      await loadBalance();
+      listenResult();
+      startCountdown();
+    });
+  </script>
+</body>
+</html>
